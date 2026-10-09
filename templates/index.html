@@ -1,0 +1,571 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Live Canvas</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/camera_utils/camera_utils.js" crossorigin="anonymous"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@mediapipe/hands/hands.js" crossorigin="anonymous"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/socket.io/4.7.2/socket.io.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
+    <style>
+        body {
+            background-color: #090d16;
+            color: #f8fafc;
+            font-family: system-ui, -apple-system, sans-serif;
+            margin: 0;
+            padding: 10px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            box-sizing: border-box;
+            overflow: hidden;
+        }
+        #webcam {
+            transform: scaleX(-1);
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 0.75rem;
+        }
+        canvas {
+            background-color: #ffffff !important;
+            width: 100%;
+            height: 100%;
+            object-fit: contain;
+            border-radius: 0.75rem;
+            cursor: crosshair;
+            touch-action: none;
+        }
+    </style>
+</head>
+<body>
+
+    <header class="mb-2 w-full flex-shrink-0 flex items-center justify-between px-6">
+        <div>
+            <h1 class="text-xl font-extrabold tracking-wider bg-gradient-to-r from-purple-400 via-pink-500 to-red-500 bg-clip-text text-transparent">
+                ✨ Live Canvas ✨
+            </h1>
+            <p class="text-slate-400 text-[10px]">Index: Draw ✍️ | Fist: Eraser 🧽 | Open hand: Pause ✋ | Mouse also works (Shift = eraser)</p>
+        </div>
+        <div class="flex items-center gap-2">
+            <button onclick="copyInvite()" id="invite-btn" class="bg-slate-800 hover:bg-slate-700 border border-slate-600 text-slate-200 px-3 py-1 rounded-full text-xs font-semibold transition">
+                Copy Invite 🔗
+            </button>
+            <div id="user-count" class="bg-teal-500/20 border border-teal-500/40 text-teal-300 px-3 py-1 rounded-full text-xs font-semibold">
+                👥 1
+            </div>
+            <div id="room-badge" class="bg-purple-500/20 border border-purple-500/40 text-purple-300 px-3 py-1 rounded-full text-xs font-semibold">
+                Room
+            </div>
+            <div id="gesture-status" class="border px-3 py-1 rounded-full text-xs font-semibold bg-indigo-500/20 border-indigo-500/40 text-indigo-300">
+                Status: Ready
+            </div>
+        </div>
+    </header>
+
+    <div class="grid grid-cols-1 md:grid-cols-2 gap-4 w-full max-w-7xl flex-grow pb-2" style="height: calc(100vh - 70px);">
+
+        <div class="relative bg-slate-900 border border-slate-700 rounded-xl overflow-hidden shadow-2xl flex items-center justify-center p-2 h-full">
+            <div class="absolute top-3 right-3 z-10 bg-black/70 backdrop-blur-md px-3 py-1 rounded-full text-xs font-semibold text-slate-200 border border-slate-700 flex items-center gap-1.5">
+                <span class="w-2 h-2 rounded-full bg-red-500 animate-pulse"></span> Live Camera
+            </div>
+            <video id="webcam" autoplay playsinline muted></video>
+        </div>
+
+        <div class="relative bg-white border border-slate-700 rounded-xl overflow-hidden shadow-2xl flex items-center justify-center p-2 h-full">
+
+            <aside class="absolute top-3 left-3 z-10 flex flex-col gap-2 bg-slate-900/95 backdrop-blur-md p-2.5 rounded-xl border border-slate-700 shadow-xl w-40">
+                <div class="text-center">
+                    <span class="text-[10px] font-bold text-slate-300">Studio Tools</span>
+                </div>
+
+                <div class="grid grid-cols-3 gap-1.5" id="color-palette"></div>
+
+                <div class="flex flex-col gap-1 pt-1 border-t border-slate-700">
+                    <div class="flex justify-between text-[9px] text-slate-300 font-semibold">
+                        <span>Size</span>
+                        <span id="size-display" class="text-pink-400 font-bold">5</span>
+                    </div>
+                    <input type="range" id="brushSize" min="2" max="35" value="5" class="w-full h-1 bg-slate-700 rounded-lg appearance-none cursor-pointer accent-pink-500">
+                </div>
+
+                <div class="flex flex-col gap-1 pt-1 border-t border-slate-700">
+                    <button onclick="smartShapeTransform()" class="w-full py-1 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 border border-purple-500/40 text-[10px] font-semibold rounded transition">Fix Shape ✨</button>
+                    <button onclick="recognizeText()" class="w-full py-1 bg-blue-500/20 hover:bg-blue-500/30 text-blue-300 border border-blue-500/40 text-[10px] font-semibold rounded transition">Read Text 📖</button>
+                    <button onclick="generateAIArt()" class="w-full py-1 bg-slate-700/40 text-slate-400 border border-slate-600 text-[10px] font-semibold rounded transition">AI Generate (soon)</button>
+                </div>
+
+                <div class="flex flex-col gap-1 pt-1 border-t border-slate-700">
+                    <div class="grid grid-cols-2 gap-1">
+                        <button onclick="undo()" class="py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-[10px] font-semibold rounded transition">Undo ↩</button>
+                        <button onclick="redo()" class="py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-600 text-[10px] font-semibold rounded transition">Redo ↪</button>
+                    </div>
+                    <button onclick="saveCanvas()" class="w-full py-1 bg-emerald-500/20 hover:bg-emerald-500/30 text-emerald-300 border border-emerald-500/40 text-[10px] font-semibold rounded transition">Download 💾</button>
+                    <button onclick="clearCanvas()" class="w-full py-1 bg-red-500/20 hover:bg-red-500/30 text-red-300 border border-red-500/40 text-[10px] font-semibold rounded transition">Clear 🗑</button>
+                </div>
+            </aside>
+
+            <div id="ai-modal" class="absolute inset-0 bg-black/80 backdrop-blur-sm z-30 hidden flex flex-col items-center justify-center p-6 text-center">
+                <div class="bg-slate-900 border border-slate-700 p-6 rounded-2xl max-w-md w-full shadow-2xl flex flex-col items-center">
+                    <h3 id="modal-title" class="text-base font-bold text-pink-400 mb-2">Title</h3>
+                    <p id="modal-content" class="text-xs text-slate-300 mb-4 whitespace-pre-wrap">Content</p>
+                    <button onclick="closeModal()" class="px-4 py-1.5 bg-slate-800 hover:bg-slate-700 text-white text-xs font-semibold rounded-lg border border-slate-600">Close</button>
+                </div>
+            </div>
+
+            <div class="absolute top-3 right-3 z-10 bg-slate-900/80 backdrop-blur-md px-3 py-1 rounded-full text-xs font-semibold text-slate-200 border border-slate-700">
+                🎨 Collaborative Canvas
+            </div>
+
+            <canvas id="output_canvas" width="800" height="600"></canvas>
+        </div>
+    </div>
+
+    <script>
+        const params = new URLSearchParams(location.search);
+        let roomName = params.get('room');
+        if (!roomName) {
+            roomName = Math.random().toString(36).slice(2, 8);
+            history.replaceState(null, '', '?room=' + roomName);
+        }
+        document.getElementById('room-badge').innerText = 'Room: ' + roomName;
+
+        const uid = Math.random().toString(36).slice(2, 8);
+        let strokeCounter = 0;
+
+        const videoElement = document.getElementById('webcam');
+        const canvasElement = document.getElementById('output_canvas');
+        const canvasCtx = canvasElement.getContext('2d');
+        const sizeSlider = document.getElementById('brushSize');
+        const sizeDisplay = document.getElementById('size-display');
+        const gestureStatus = document.getElementById('gesture-status');
+        const W = canvasElement.width;
+        const H = canvasElement.height;
+
+        let currentBrushColor = '#0f172a';
+        let currentBrushSize = 5;
+        let strokes = [];          
+        let redoStack = [];        
+        let currentStroke = null;
+        let currentSource = null;  
+
+        const socket = io();
+        socket.on('connect', () => socket.emit('join_room', { room: roomName }));
+
+        const STATUS_STYLES = {
+            ready: 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300',
+            draw:  'bg-emerald-500/20 border-emerald-500/40 text-emerald-300',
+            erase: 'bg-red-500/20 border-red-500/40 text-red-300',
+            pause: 'bg-amber-500/20 border-amber-500/40 text-amber-300',
+            off:   'bg-slate-700/50 border-slate-600 text-slate-400'
+        };
+        let lastStatusKey = '';
+        function setStatus(text, kind) {
+            const key = text + kind;
+            if (key === lastStatusKey) return;
+            lastStatusKey = key;
+            gestureStatus.innerText = 'Status: ' + text;
+            gestureStatus.className = 'border px-3 py-1 rounded-full text-xs font-semibold ' + STATUS_STYLES[kind];
+        }
+
+        const colors = ['#0f172a', '#ef4444', '#3b82f6', '#22c55e', '#a855f7', '#f97316', '#eab308', '#ec4899', '#64748b'];
+        const palette = document.getElementById('color-palette');
+        colors.forEach((color, i) => {
+            const btn = document.createElement('button');
+            btn.className = 'w-6 h-6 rounded-full border-2 shadow-md hover:scale-110 transition-transform focus:outline-none';
+            btn.style.backgroundColor = color;
+            btn.style.borderColor = i === 0 ? '#f43f5e' : 'rgba(255,255,255,0.8)';
+            btn.onclick = () => {
+                currentBrushColor = color;
+                document.querySelectorAll('#color-palette button').forEach(b => b.style.borderColor = 'rgba(255,255,255,0.8)');
+                btn.style.borderColor = '#f43f5e';
+            };
+            palette.appendChild(btn);
+        });
+
+        sizeSlider.oninput = (e) => {
+            currentBrushSize = Number(e.target.value);
+            sizeDisplay.innerText = currentBrushSize;
+        };
+
+        function fillWhite() {
+            canvasCtx.fillStyle = '#ffffff';
+            canvasCtx.fillRect(0, 0, W, H);
+        }
+
+        function applyStyle(s) {
+            canvasCtx.strokeStyle = s.color;
+            canvasCtx.fillStyle = s.color;
+            canvasCtx.lineWidth = s.size;
+            canvasCtx.lineCap = 'round';
+            canvasCtx.lineJoin = 'round';
+        }
+
+        function renderStroke(s) {
+            if (!s.points.length) return;
+            applyStyle(s);
+            if (s.points.length === 1) {
+                canvasCtx.beginPath();
+                canvasCtx.arc(s.points[0][0], s.points[0][1], s.size / 2, 0, Math.PI * 2);
+                canvasCtx.fill();
+                return;
+            }
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(s.points[0][0], s.points[0][1]);
+            for (let i = 1; i < s.points.length; i++) {
+                canvasCtx.lineTo(s.points[i][0], s.points[i][1]);
+            }
+            canvasCtx.stroke();
+        }
+
+        function drawSegment(s, a, b) {
+            applyStyle(s);
+            canvasCtx.beginPath();
+            canvasCtx.moveTo(a[0], a[1]);
+            canvasCtx.lineTo(b[0], b[1]);
+            canvasCtx.stroke();
+        }
+
+        function redrawAll() {
+            fillWhite();
+            strokes.forEach(renderStroke);
+        }
+
+        fillWhite();
+
+        function beginStroke(x, y, erase, source) {
+            const s = {
+                id: uid + '-' + (strokeCounter++),
+                uid: uid,
+                color: erase ? '#ffffff' : currentBrushColor,
+                size: erase ? currentBrushSize * 4 : currentBrushSize,
+                erase: erase,
+                points: [[x, y]]
+            };
+            strokes.push(s);
+            redoStack = [];
+            currentStroke = s;
+            currentSource = source;
+            renderStroke(s);
+            socket.emit('stroke_start', { stroke: { ...s, points: [[x, y]] } });
+        }
+
+        function addPoint(x, y) {
+            if (!currentStroke) return;
+            const pts = currentStroke.points;
+            const prev = pts[pts.length - 1];
+            if (Math.hypot(x - prev[0], y - prev[1]) < 2) return;
+            pts.push([x, y]);
+            drawSegment(currentStroke, prev, [x, y]);
+            socket.emit('stroke_point', { id: currentStroke.id, point: [x, y] });
+        }
+
+        function endStroke(source) {
+            if (source && currentSource !== source) return;
+            currentStroke = null;
+            currentSource = null;
+        }
+
+        socket.on('init_board', (list) => {
+            strokes = list || [];
+            redrawAll();
+        });
+
+        function addRemoteStroke(data) {
+            strokes.push(data.stroke);
+            renderStroke(data.stroke);
+        }
+        socket.on('stroke_start', addRemoteStroke);
+        socket.on('stroke_full', addRemoteStroke);
+
+        socket.on('stroke_point', (data) => {
+            const s = strokes.find(st => st.id === data.id);
+            if (!s) return;
+            const prev = s.points[s.points.length - 1];
+            s.points.push(data.point);
+            if (prev) drawSegment(s, prev, data.point);
+        });
+
+        socket.on('stroke_removed', (data) => {
+            strokes = strokes.filter(s => s.id !== data.id);
+            redrawAll();
+        });
+
+        socket.on('stroke_replace', (data) => {
+            const s = strokes.find(st => st.id === data.id);
+            if (s) { s.points = data.points; redrawAll(); }
+        });
+
+        socket.on('clear_board', () => {
+            strokes = [];
+            fillWhite();
+        });
+
+        socket.on('user_count', (n) => {
+            document.getElementById('user-count').innerText = '👥 ' + n;
+        });
+
+        function undo() {
+            endStroke();
+            for (let i = strokes.length - 1; i >= 0; i--) {
+                if (strokes[i].uid === uid) {
+                    const [s] = strokes.splice(i, 1);
+                    redoStack.push(s);
+                    redrawAll();
+                    socket.emit('undo', { id: s.id });
+                    return;
+                }
+            }
+        }
+
+        function redo() {
+            const s = redoStack.pop();
+            if (!s) return;
+            strokes.push(s);
+            renderStroke(s);
+            socket.emit('stroke_full', { stroke: s });
+        }
+
+        function clearCanvas() {
+            endStroke();
+            strokes = [];
+            redoStack = [];
+            fillWhite();
+            socket.emit('clear_canvas');
+        }
+
+        function saveCanvas() {
+            const link = document.createElement('a');
+            link.download = 'live-canvas.png';
+            link.href = canvasElement.toDataURL();
+            link.click();
+        }
+
+        function copyInvite() {
+            const btn = document.getElementById('invite-btn');
+            navigator.clipboard.writeText(location.href).then(() => {
+                btn.innerText = 'Copied ✅';
+                setTimeout(() => btn.innerText = 'Copy Invite 🔗', 1500);
+            });
+        }
+
+        function showModal(title, text) {
+            document.getElementById('modal-title').innerText = title;
+            document.getElementById('modal-content').innerText = text;
+            document.getElementById('ai-modal').classList.remove('hidden');
+        }
+        function closeModal() {
+            document.getElementById('ai-modal').classList.add('hidden');
+        }
+
+        function dist(a, b) { return Math.hypot(a[0] - b[0], a[1] - b[1]); }
+
+        function ellipsePoints(cx, cy, rx, ry, n = 72) {
+            const out = [];
+            for (let i = 0; i <= n; i++) {
+                const a = (2 * Math.PI * i) / n;
+                out.push([cx + rx * Math.cos(a), cy + ry * Math.sin(a)]);
+            }
+            return out;
+        }
+
+        function detectShape(pts) {
+            if (pts.length < 8) return null;
+            const xs = pts.map(p => p[0]);
+            const ys = pts.map(p => p[1]);
+            const minX = Math.min(...xs), maxX = Math.max(...xs);
+            const minY = Math.min(...ys), maxY = Math.max(...ys);
+            const w = maxX - minX, h = maxY - minY;
+            const diag = Math.hypot(w, h);
+            if (diag < 30) return null;
+
+            const first = pts[0], last = pts[pts.length - 1];
+            const closed = dist(first, last) < diag * 0.25;
+
+            if (!closed) {
+                const L = dist(first, last);
+                if (L < 1) return null;
+                let maxDev = 0;
+                for (const p of pts) {
+                    const dev = Math.abs((last[0] - first[0]) * (first[1] - p[1]) -
+                                         (first[0] - p[0]) * (last[1] - first[1])) / L;
+                    maxDev = Math.max(maxDev, dev);
+                }
+                if (maxDev < L * 0.08) return { type: 'line', points: [first, last] };
+                return null;
+            }
+
+            if (w < 15 || h < 15) return null;
+            const cx = (minX + maxX) / 2, cy = (minY + maxY) / 2;
+            const rx = w / 2, ry = h / 2;
+
+            let ellipseErr = 0, rectErr = 0;
+            for (const p of pts) {
+                const nx = (p[0] - cx) / rx, ny = (p[1] - cy) / ry;
+                ellipseErr += Math.abs(Math.hypot(nx, ny) - 1);
+                const d = Math.min(Math.abs(p[0] - minX), Math.abs(p[0] - maxX),
+                                   Math.abs(p[1] - minY), Math.abs(p[1] - maxY));
+                rectErr += d / (Math.min(w, h) / 2);
+            }
+            ellipseErr /= pts.length;
+            rectErr /= pts.length;
+
+            if (Math.min(ellipseErr, rectErr) > 0.15) return null;
+
+            if (ellipseErr <= rectErr) {
+                if (Math.abs(rx - ry) < 0.2 * Math.max(rx, ry)) {
+                    const r = (rx + ry) / 2;
+                    return { type: 'circle', points: ellipsePoints(cx, cy, r, r) };
+                }
+                return { type: 'ellipse', points: ellipsePoints(cx, cy, rx, ry) };
+            }
+            return {
+                type: 'rectangle',
+                points: [[minX, minY], [maxX, minY], [maxX, maxY], [minX, maxY], [minX, minY]]
+            };
+        }
+
+        function smartShapeTransform() {
+            endStroke();
+            for (let i = strokes.length - 1; i >= 0; i--) {
+                const s = strokes[i];
+                if (s.uid === uid && !s.erase) {
+                    const shape = detectShape(s.points);
+                    if (!shape) {
+                        showModal('✨ Fix Shape', 'Could not recognise the last shape.\nTry a clearer line, circle or rectangle.');
+                        return;
+                    }
+                    s.points = shape.points;
+                    redrawAll();
+                    socket.emit('stroke_replace', { id: s.id, points: s.points });
+                    showModal('✨ Fix Shape', 'Detected: ' + shape.type);
+                    return;
+                }
+            }
+            showModal('✨ Fix Shape', 'Draw something first.');
+        }
+
+        async function recognizeText() {
+            endStroke();
+            showModal('📖 Reading...', 'Running OCR on your drawing.\nFirst run downloads language data, please wait.');
+            try {
+                const result = await Tesseract.recognize(canvasElement.toDataURL(), 'eng');
+                const text = (result.data.text || '').trim();
+                showModal('📖 Recognized Text',
+                    text || 'No text found.\nTry big, clear block letters with a thicker brush.');
+            } catch (e) {
+                showModal('📖 OCR Error', 'Could not run OCR: ' + e.message);
+            }
+        }
+
+        function generateAIArt() {
+            showModal('🎨 AI Generate',
+                'Not connected yet.\nThis needs an image-generation API key on the server.');
+        }
+
+        function pointerToCanvas(e) {
+            const r = canvasElement.getBoundingClientRect();
+            const scale = Math.min(r.width / W, r.height / H);
+            const offX = (r.width - W * scale) / 2;
+            const offY = (r.height - H * scale) / 2;
+            return [(e.clientX - r.left - offX) / scale, (e.clientY - r.top - offY) / scale];
+        }
+
+        canvasElement.addEventListener('pointerdown', (e) => {
+            if (currentStroke) return;
+            canvasElement.setPointerCapture(e.pointerId);
+            const [x, y] = pointerToCanvas(e);
+            beginStroke(x, y, e.shiftKey, 'mouse');
+        });
+        canvasElement.addEventListener('pointermove', (e) => {
+            if (currentSource !== 'mouse') return;
+            const [x, y] = pointerToCanvas(e);
+            addPoint(x, y);
+        });
+        ['pointerup', 'pointercancel'].forEach(ev =>
+            canvasElement.addEventListener(ev, () => endStroke('mouse')));
+
+        function fingerExtended(lm, tip, pip) {
+            const wrist = lm[0];
+            const dTip = Math.hypot(lm[tip].x - wrist.x, lm[tip].y - wrist.y);
+            const dPip = Math.hypot(lm[pip].x - wrist.x, lm[pip].y - wrist.y);
+            return dTip > dPip;
+        }
+
+        function rawGesture(lm) {
+            const index = fingerExtended(lm, 8, 6);
+            const middle = fingerExtended(lm, 12, 10);
+            const ring = fingerExtended(lm, 16, 14);
+            const pinky = fingerExtended(lm, 20, 18);
+            if (index && !middle && !ring && !pinky) return 'DRAW';
+            if (!index && !middle && !ring && !pinky) return 'FIST';
+            return 'PAUSE';
+        }
+
+        let activeGesture = 'NONE', pendingGesture = null, pendingCount = 0, lastGesture = 'NONE';
+        function stabilize(g) {
+            if (g === activeGesture) { pendingGesture = null; pendingCount = 0; return activeGesture; }
+            if (g === pendingGesture) pendingCount++;
+            else { pendingGesture = g; pendingCount = 1; }
+            if (pendingCount >= 3) { activeGesture = g; pendingGesture = null; pendingCount = 0; }
+            return activeGesture;
+        }
+
+        let sx = null, sy = null;
+        function resetSmooth() { sx = null; sy = null; }
+        function smooth(x, y) {
+            if (sx === null) { sx = x; sy = y; }
+            else { sx = sx * 0.6 + x * 0.4; sy = sy * 0.6 + y * 0.4; }
+            return [sx, sy];
+        }
+
+        function onResults(results) {
+            const lm = results.multiHandLandmarks && results.multiHandLandmarks[0];
+
+            if (!lm) {
+                activeGesture = 'NONE'; lastGesture = 'NONE';
+                pendingGesture = null; pendingCount = 0;
+                endStroke('hand');
+                resetSmooth();
+                setStatus('No Hand ❌', 'off');
+                return;
+            }
+
+            const gesture = stabilize(rawGesture(lm));
+            if (gesture !== lastGesture) {
+                endStroke('hand');
+                resetSmooth();
+                lastGesture = gesture;
+            }
+
+            if (currentSource === 'mouse') return; 
+
+            if (gesture === 'DRAW' || gesture === 'FIST') {
+                const erase = gesture === 'FIST';
+                const anchor = erase ? lm[9] : lm[8];   
+                const [x, y] = smooth((1 - anchor.x) * W, anchor.y * H);
+                setStatus(erase ? 'Eraser 🧽' : 'Drawing ✍️', erase ? 'erase' : 'draw');
+                if (!currentStroke) beginStroke(x, y, erase, 'hand');
+                else addPoint(x, y);
+            } else if (gesture === 'PAUSE') {
+                setStatus('Paused ✋', 'pause');
+            } else {
+                setStatus('Ready', 'ready');
+            }
+        }
+
+        const hands = new Hands({ locateFile: (file) => `https://cdn.jsdelivr.net/npm/@mediapipe/hands/${file}` });
+        hands.setOptions({ maxNumHands: 1, modelComplexity: 1, minDetectionConfidence: 0.7, minTrackingConfidence: 0.7 });
+        hands.onResults(onResults);
+
+        const camera = new Camera(videoElement, {
+            onFrame: async () => { await hands.send({ image: videoElement }); },
+            width: 800, height: 600
+        });
+        camera.start().catch(() => setStatus('Camera blocked ❌', 'off'));
+    </script>
+</body>
+</html>
